@@ -1,0 +1,9 @@
+#!/usr/bin/expect -f
+#auto ssh login
+set timeout 30
+#set sshhost [lindex $argv 0]
+spawn ssh -D 8087 -Nf -C muyi@116.251.211.147
+expect "password:"
+send "muyi\r"
+#interact
+expect eof
