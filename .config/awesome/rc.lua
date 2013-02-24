@@ -122,9 +122,11 @@ mytasklist = {}
 -- Clock
 mytextclock = awful.widget.textclock(
   { align = "right" },
-  " <span color='" .. beautiful.fg_em .. "'>%a %m/%d</span> @ %I:%M %p "
+  " <span color='" .. beautiful.fg_em .. "'>%a %m/%d</span> @ %H:%M"
+--  " <span color='" .. beautiful.fg_em .. "'>%a %m/%d</span> @ %I:%M %p "
 )
-
+require('calendar2')
+calendar2.addCalendarToWidget(mytextclock)
 -- Systray
 mysystray = widget({ type = "systray" })
 
@@ -194,8 +196,8 @@ for s = 1, screen.count() do
       layout = awful.widget.layout.horizontal.leftright
     },
     volspacer, volbar.widget, volicon, spacer,
+    mytextclock,
     batbar.widget, baticon, spacer,
-   -- pacwidget, pacicon, spacer,
     mpdwidget, mpdicon, spacer,
     mytasklist[s],
     layout = awful.widget.layout.horizontal.rightleft
@@ -216,7 +218,7 @@ for s = 1, screen.count() do
     layout = awful.widget.layout.horizontal.leftright,
     {
       s == 1 and mysystray or nil,
-      mytextclock, weather,
+      weather,
       layout = awful.widget.layout.horizontal.rightleft
     }
   }

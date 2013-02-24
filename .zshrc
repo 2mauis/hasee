@@ -5,7 +5,8 @@ compinit
 
 bindkey -e    #Emacs风格键绑定 Ctrl+a Ctrl+e
 bindkey "\e[3~" delete-char     #设置 [DEL]键 为向后删除
-
+setopt IGNORE_EOF
+bindkey '^D' extended_logout
 export HISTFILE=~/.zsh_history  # location of history
 export HISTSIZE=10000000  # number of lines kept in history
 export SAVEHIST=10000000  # number of lines saved in the history after logout
@@ -34,6 +35,7 @@ fi
 #hash -d X="/etc/X11"
 
 ##常用alias
+alias x='exit'
 alias dstat='dstat -cdlmnpsy'
 alias hist='cat ~/.zsh_history |grep'
 alias ls='ls --color=auto -F'
@@ -128,7 +130,6 @@ zle -N sudo-command-line
 #定义快捷键为： [Esc] [Esc]
 bindkey "\e\e" sudo-command-line
 #}}}
-bindkey "^D"   extended_logout
 #[Esc][h] man 当前命令时，显示简短说明
 alias run-help >&/dev/null && unalias run-help
 autoload run-help
@@ -228,3 +229,4 @@ fy () {
     | sed '1,2d' | tac |sed -r '/^[0-9]+\./N;s/\n//'>/tmp/rxdict.tmp
     cat /tmp/rxdict.tmp
 }
+
