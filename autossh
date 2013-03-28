@@ -1,9 +1,633 @@
-#!/usr/bin/expect -f
-#auto ssh login
-set timeout 30
-#set sshhost [lindex $argv 0]
-spawn ssh -D 8087 -Nf -C muyi@116.251.211.147
-expect "password:"
-send "muyi\r"
-#interact
-expect eof
+
+#include "motor.h"
+#include "data_process.h"
+#include "dma_tim.h"
+#include "common.h"
+
+void Motor_Check(void)
+{  
+  
+	m_Sys_Status=SYS_BUSY;//
+	 /*电机状初始化*/
+	if (m_Motor_Cmd&0x1)
+	{	Motor1_Data_Init();
+		m_Motor_Cmd&=!0x1;  //清除初始命令标志
+	}
+	if(m_Motor_Cmd&(1<<1))
+	
+  {	
+		Motor2_Data_Init();
+		m_Motor_Cmd&=!(1<<1); 
+	}
+	if(m_Motor_Cmd&(1<<2))
+	{
+	  Motor3_Data_Init();
+		m_Motor_Cmd&=!(1<<2);
+	}
+	if(m_Motor_Cmd&(1<<3))
+	{
+		Motor4_Data_Init();
+		m_Motor_Cmd&=!(1<<3);
+	}
+	if(m_Motor_Cmd&(1<<4))
+	{
+		Motor5_Data_Init();
+		m_Motor_Cmd&=!(1<<4);
+	}
+	/**电机数据更新**/
+		if(m_Motor_Cmd&(1<<5))
+		{	Motor1_Data_Read();
+			m_Motor_Cmd&=!(1<<5);
+		}
+	  if(m_Motor_Cmd&(1<<6))
+		{
+			Motor2_Data_Read();
+			m_Motor_Cmd&=!(1<<6);
+		}
+		if(m_Motor_Cmd&(1<<7))
+		{	Motor3_Data_Read();
+			m_Motor_Cmd&=!(1<<7);
+		}
+		if(m_Motor_Cmd&(1<<8))
+		{
+			Motor4_Data_Read();
+			m_Motor_Cmd&=!(1<<8);
+		}
+		if(m_Motor_Cmd&(1<<9))
+		{ 
+			Motor5_Data_Read();
+			m_Motor_Cmd&=!(1<<9);
+		}
+		m_Sys_Status=SYS_READY;// 
+//continue;
+}
+
+void  Motor_Free(u8 Motor_Num)
+{
+
+switch( Motor_Num)
+	{
+		case   MOTOR1: GPIO_ResetBits( GPIOA, GPIO_Pin_10);break;
+		case   MOTOR2: GPIO_ResetBits( GPIOB, GPIO_Pin_7);break;
+		case   MOTOR3: GPIO_ResetBits( GPIOB, GPIO_Pin_2);break;
+		case   MOTOR4: GPIO_ResetBits( GPIOC, GPIO_Pin_2);break;
+		case   MOTOR5: GPIO_ResetBits( GPIOA, GPIO_Pin_5);break;
+		default:;
+	}
+}
+
+	
+void Motor1_Direction_Control(u8 Direction)
+{
+   if(Direction==MOTOR_DIR_FORWARD )
+     GPIO_SetBits( GPIOA, GPIO_Pin_9); 
+		else
+			GPIO_ResetBits( GPIOB, GPIO_Pin_9);
+  GPIO_SetBits( GPIOA, GPIO_Pin_10);//先设置方向 后开启使能
+}	
+
+
+void Motor2_Direction_Control(u8 Direction)
+{
+if(Direction==MOTOR_DIR_FORWARD )
+     GPIO_SetBits( GPIOB, GPIO_Pin_6); 
+		else
+			GPIO_ResetBits( GPIOB, GPIO_Pin_6);
+  GPIO_SetBits( GPIOB, GPIO_Pin_7);//先设置方向 后开启使能
+		
+	}
+
+void Motor3_Direction_Control(u8 Direction)
+{
+if(Direction==MOTOR_DIR_FORWARD )
+     GPIO_SetBits( GPIOB, GPIO_Pin_1); 
+		else
+			GPIO_ResetBits( GPIOA, GPIO_Pin_1);
+  GPIO_SetBits( GPIOB, GPIO_Pin_2);//先设置方向 后开启使能
+}
+
+void Motor4_Direction_Control(u8 Direction)
+{
+if(Direction==MOTOR_DIR_FORWARD )
+     GPIO_SetBits( GPIOC, GPIO_Pin_1); 
+		else
+			GPIO_ResetBits( GPIOC, GPIO_Pin_1);
+  GPIO_SetBits( GPIOC, GPIO_Pin_1);//先设置方向 后开启使能
+	}
+
+void Motor5_Direction_Control(u8 Direction)
+{ 
+if(Direction==MOTOR_DIR_FORWARD )
+     GPIO_SetBits( GPIOC, GPIO_Pin_4); 
+		else
+			GPIO_ResetBits( GPIOA, GPIO_Pin_4);
+  GPIO_SetBits( GPIOC, GPIO_Pin_5);//先设置方向 后开启使能
+	}
+
+
+/**电机启动函数**/
+ 
+ void	Motor3_Start()
+ {	 
+  m_Status_Speed_Flag[MOTOR3]=STATUS_ACC; //开启加速标志
+	DMA1_Channel6->CMAR=(u32)m_Acc_Curve[MOTOR3];  //复位首地址
+	 /****根据模式设置 传送表****/
+	if(m_Init_Model[MOTOR3]==MODEL1)
+		DMA1_Channel6->CNDTR=m_Init_Acc_Step[MOTOR3];
+	else
+		DMA1_Channel6->CNDTR=m_Acc_Step[MOTOR3];
+	/**DMA初始化完成 使能电机*/
+	DMA_Cmd(DMA1_Channel6,ENABLE);// 使能dma
+	TIM_Cmd(TIM3,ENABLE);	//开启时钟   启动电机	
+}
+
+
+/**更新相对步数 */
+void  Update_Relative_Step3(void)
+{
+		 if (m_Init_Direction[MOTOR3]==MOTOR_DIR_BACKWARD)
+				m_Status_Relative_Step[MOTOR3]-=m_Step_TMP-1;
+			else
+				m_Status_Relative_Step[MOTOR3]+=m_Step_TMP-1;
+				m_Status_Speed_Flag[MOTOR3]=STATUS_STOP;
+
+}
+
+/**dma中断服务程序  */
+
+
+void Motor1_Run(void)
+{
+		if(m_Init_Model[MOTOR1]==MODEL1) // 两段模式  
+				{  
+						 if(m_Status_Speed_Flag[MOTOR3]==STATUS_ACC)
+						 {
+									  DMA_Cmd(DMA1_Channel2, DISABLE);	//DMA
+									
+							   //   m_Dec_Curve[MOTOR3] + m_Dec_Step[MOTOR3]-m_Init_Dec_Step[MOTOR3];
+										DMA1_Channel2->CMAR=(u32)( m_Dec_Curve[MOTOR1] + m_Dec_Step[MOTOR1]-m_Init_Dec_Step[MOTOR1]);
+										DMA1_Channel2->CNDTR=m_Init_Dec_Step[MOTOR1];
+							      DMA_Cmd(DMA1_Channel2, ENABLE);
+							 	  m_Status_Speed_Flag[MOTOR1]=STATUS_DEC;
+							 return;
+									
+							}
+		   if(m_Status_Speed_Flag[MOTOR1]==STATUS_DEC)
+						{
+									//	m_Status_Speed_Flag[MOTOR3]=STATUS_STOP;
+										DMA_Cmd(DMA1_Channel2, DISABLE);//释放dma 通道 
+										TIM_Cmd(TIM3,DISABLE);//  关闭时钟 
+							   	  Update_Relative_Step1();  //更新相对步数
+						 
+						}
+						return;
+					 
+				}		
+				
+	if(m_Init_Model[MOTOR3]==MODEL0)
+			{
+				if ( m_Status_Speed_Flag[MOTOR3]==STATUS_ACC)//   分段传输最高速度的  步数
+					{
+						if(m_t[MOTOR3]>0) 
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_t[MOTOR3]--;//千单位减少
+							DMA1_Channel6->CNDTR=1000;//传输 一千个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退 函数
+							}	
+						if(m_h[MOTOR3]>0)	
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_h[MOTOR3]--;//百单位减少
+							DMA1_Channel6->CNDTR=100;//传输 一百个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退函数
+						}
+						if(m_d[MOTOR3]>0)	
+						{
+								DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_d[MOTOR3]--;//十单位减少
+							DMA1_Channel6->CNDTR=10;//传输 一百个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退函数
+						}
+
+						if(m_u[MOTOR3]>0)	
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_u[MOTOR3]--;//个单位减少
+							DMA1_Channel6->CNDTR=1;//传输 1个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //退出
+						}
+					if(m_u[MOTOR3]==0)  //转换成减速
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							 m_Status_Speed_Flag[MOTOR3]=STATUS_DEC;
+											
+							 DMA1_Channel6->CMAR=(u32)m_Dec_Curve[MOTOR3];
+							 DMA1_Channel6->CNDTR=m_Dec_Step[MOTOR3];	
+									
+							 DMA_Cmd(DMA1_Channel6,ENABLE);
+							return ;
+							} 
+						}
+				if( m_Status_Speed_Flag[MOTOR3]==STATUS_DEC)		
+							{	
+								DMA_Cmd(DMA1_Channel6, DISABLE);//释放dma 通道 
+								TIM_Cmd(TIM3,DISABLE);//  关闭时钟 
+							//	TIM3->ARR=ACTIVE_TIME-2;  // 限制arr的值 输出
+									Update_Relative_Step3();	//更新相对步数 设置速度状态.
+							}
+			}
+
+}
+
+
+
+
+
+void Motor2_Run(void)
+{
+		if(m_Init_Model[MOTOR3]==MODEL1) // 两段模式  
+				{  
+						 if(m_Status_Speed_Flag[MOTOR3]==STATUS_ACC)
+						 {
+									  DMA_Cmd(DMA1_Channel6, DISABLE);	//DMA
+									
+							   //   m_Dec_Curve[MOTOR3] + m_Dec_Step[MOTOR3]-m_Init_Dec_Step[MOTOR3];
+										DMA1_Channel6->CMAR=(u32)( m_Dec_Curve[MOTOR3] + m_Dec_Step[MOTOR3]-m_Init_Dec_Step[MOTOR3]);
+										DMA1_Channel6->CNDTR=m_Init_Dec_Step[MOTOR3];
+							      DMA_Cmd(DMA1_Channel6, ENABLE);
+							 	  m_Status_Speed_Flag[MOTOR3]=STATUS_DEC;
+							return;
+									
+							}
+		   if(m_Status_Speed_Flag[MOTOR3]==STATUS_DEC)
+						{
+									//	m_Status_Speed_Flag[MOTOR3]=STATUS_STOP;
+										DMA_Cmd(DMA1_Channel6, DISABLE);//释放dma 通道 
+										TIM_Cmd(TIM3,DISABLE);//  关闭时钟 
+							   	  Update_Relative_Step3();  //更新相对步数
+						 
+						}
+	    	return;
+					 
+				}		
+		if(m_Init_Model[MOTOR3]==MODEL0)
+			{
+				if ( m_Status_Speed_Flag[MOTOR3]==STATUS_ACC)
+					{
+						if(m_t[MOTOR3]>0) 
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_t[MOTOR3]--;//千单位减少
+							DMA1_Channel6->CNDTR=1000;//传输 一千个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退 函数
+							}	
+						if(m_h[MOTOR3]>0)	
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_h[MOTOR3]--;//百单位减少
+							DMA1_Channel6->CNDTR=100;//传输 一百个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退函数
+						}
+						if(m_d[MOTOR3]>0)	
+						{
+								DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_d[MOTOR3]--;//十单位减少
+							DMA1_Channel6->CNDTR=10;//传输 一百个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退函数
+						}
+
+						if(m_u[MOTOR3]>0)	
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_u[MOTOR3]--;//个单位减少
+							DMA1_Channel6->CNDTR=1;//传输 1个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //退出
+						}
+						if(m_u[MOTOR3]==0)  //转换成减速
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							 m_Status_Speed_Flag[MOTOR3]=STATUS_DEC;
+											
+							 DMA1_Channel6->CMAR=(u32)m_Dec_Curve[MOTOR3];
+							 DMA1_Channel6->CNDTR=m_Dec_Step[MOTOR3];	
+									
+							 DMA_Cmd(DMA1_Channel6,ENABLE);
+							return ;
+							} 
+						}
+				if( m_Status_Speed_Flag[MOTOR3]==STATUS_DEC)		
+							{	
+								DMA_Cmd(DMA1_Channel6, DISABLE);//释放dma 通道 
+								TIM_Cmd(TIM3,DISABLE);//  关闭时钟 
+							//	TIM3->ARR=ACTIVE_TIME-2;  // 限制arr的值 输出
+									Update_Relative_Step3();	//更新相对步数 设置速度状态.
+							}
+			}
+
+}
+
+
+
+
+
+
+void Motor3_Run(void)
+{
+		if(m_Init_Model[MOTOR3]==MODEL1) // 两段模式  
+				{  
+						 if(m_Status_Speed_Flag[MOTOR3]==STATUS_ACC)
+						 {
+									  DMA_Cmd(DMA1_Channel6, DISABLE);	//DMA
+									
+							   //   m_Dec_Curve[MOTOR3] + m_Dec_Step[MOTOR3]-m_Init_Dec_Step[MOTOR3];
+										DMA1_Channel6->CMAR=(u32)( m_Dec_Curve[MOTOR3] + m_Dec_Step[MOTOR3]-m_Init_Dec_Step[MOTOR3]);
+										DMA1_Channel6->CNDTR=m_Init_Dec_Step[MOTOR3];
+							      DMA_Cmd(DMA1_Channel6, ENABLE);
+							 	  m_Status_Speed_Flag[MOTOR3]=STATUS_DEC;
+							return;
+									
+							}
+		   if(m_Status_Speed_Flag[MOTOR3]==STATUS_DEC)
+						{
+									//	m_Status_Speed_Flag[MOTOR3]=STATUS_STOP;
+										DMA_Cmd(DMA1_Channel6, DISABLE);//释放dma 通道 
+										TIM_Cmd(TIM3,DISABLE);//  关闭时钟 
+							   	  Update_Relative_Step3();  //更新相对步数
+						 
+						}
+	    	return;
+					 
+				}		
+		if(m_Init_Model[MOTOR3]==MODEL0)
+			{
+				if ( m_Status_Speed_Flag[MOTOR3]==STATUS_ACC)
+					{
+						if(m_t[MOTOR3]>0) 
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_t[MOTOR3]--;//千单位减少
+							DMA1_Channel6->CNDTR=1000;//传输 一千个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退 函数
+							}	
+						if(m_h[MOTOR3]>0)	
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_h[MOTOR3]--;//百单位减少
+							DMA1_Channel6->CNDTR=100;//传输 一百个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退函数
+						}
+						if(m_d[MOTOR3]>0)	
+						{
+								DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_d[MOTOR3]--;//十单位减少
+							DMA1_Channel6->CNDTR=10;//传输 一百个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退函数
+						}
+
+						if(m_u[MOTOR3]>0)	
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_u[MOTOR3]--;//个单位减少
+							DMA1_Channel6->CNDTR=1;//传输 1个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //退出
+						}
+						if(m_u[MOTOR3]==0)  //转换成减速
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							 m_Status_Speed_Flag[MOTOR3]=STATUS_DEC;
+											
+							 DMA1_Channel6->CMAR=(u32)m_Dec_Curve[MOTOR3];
+							 DMA1_Channel6->CNDTR=m_Dec_Step[MOTOR3];	
+									
+							 DMA_Cmd(DMA1_Channel6,ENABLE);
+							return ;
+							} 
+						}
+				if( m_Status_Speed_Flag[MOTOR3]==STATUS_DEC)		
+							{	
+								DMA_Cmd(DMA1_Channel6, DISABLE);//释放dma 通道 
+								TIM_Cmd(TIM3,DISABLE);//  关闭时钟 
+							//	TIM3->ARR=ACTIVE_TIME-2;  // 限制arr的值 输出
+									Update_Relative_Step3();	//更新相对步数 设置速度状态.
+							}
+			}
+
+}
+
+
+
+
+
+
+void Motor4_Run(void)
+{
+		if(m_Init_Model[MOTOR3]==MODEL1) // 两段模式  
+				{  
+						 if(m_Status_Speed_Flag[MOTOR3]==STATUS_ACC)
+						 {
+									  DMA_Cmd(DMA1_Channel6, DISABLE);	//DMA
+									
+							   //   m_Dec_Curve[MOTOR3] + m_Dec_Step[MOTOR3]-m_Init_Dec_Step[MOTOR3];
+										DMA1_Channel6->CMAR=(u32)( m_Dec_Curve[MOTOR3] + m_Dec_Step[MOTOR3]-m_Init_Dec_Step[MOTOR3]);
+										DMA1_Channel6->CNDTR=m_Init_Dec_Step[MOTOR3];
+							      DMA_Cmd(DMA1_Channel6, ENABLE);
+							 	  m_Status_Speed_Flag[MOTOR3]=STATUS_DEC;
+							return;
+									
+							}
+		   if(m_Status_Speed_Flag[MOTOR3]==STATUS_DEC)
+						{
+									//	m_Status_Speed_Flag[MOTOR3]=STATUS_STOP;
+										DMA_Cmd(DMA1_Channel6, DISABLE);//释放dma 通道 
+										TIM_Cmd(TIM3,DISABLE);//  关闭时钟 
+							   	  Update_Relative_Step3();  //更新相对步数
+						 
+						}
+	    	return;
+					 
+				}		
+		if(m_Init_Model[MOTOR3]==MODEL0)
+			{
+				if ( m_Status_Speed_Flag[MOTOR3]==STATUS_ACC)
+					{
+						if(m_t[MOTOR3]>0) 
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_t[MOTOR3]--;//千单位减少
+							DMA1_Channel6->CNDTR=1000;//传输 一千个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退 函数
+							}	
+						if(m_h[MOTOR3]>0)	
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_h[MOTOR3]--;//百单位减少
+							DMA1_Channel6->CNDTR=100;//传输 一百个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退函数
+						}
+						if(m_d[MOTOR3]>0)	
+						{
+								DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_d[MOTOR3]--;//十单位减少
+							DMA1_Channel6->CNDTR=10;//传输 一百个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退函数
+						}
+
+						if(m_u[MOTOR3]>0)	
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_u[MOTOR3]--;//个单位减少
+							DMA1_Channel6->CNDTR=1;//传输 1个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //退出
+						}
+						if(m_u[MOTOR3]==0)  //转换成减速
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							 m_Status_Speed_Flag[MOTOR3]=STATUS_DEC;
+											
+							 DMA1_Channel6->CMAR=(u32)m_Dec_Curve[MOTOR3];
+							 DMA1_Channel6->CNDTR=m_Dec_Step[MOTOR3];	
+									
+							 DMA_Cmd(DMA1_Channel6,ENABLE);
+							return ;
+							} 
+						}
+				if( m_Status_Speed_Flag[MOTOR3]==STATUS_DEC)		
+							{	
+								DMA_Cmd(DMA1_Channel6, DISABLE);//释放dma 通道 
+								TIM_Cmd(TIM3,DISABLE);//  关闭时钟 
+							//	TIM3->ARR=ACTIVE_TIME-2;  // 限制arr的值 输出
+									Update_Relative_Step3();	//更新相对步数 设置速度状态.
+							}
+			}
+
+}
+
+
+
+
+
+
+
+void Motor5_Run(void)
+{
+		if(m_Init_Model[MOTOR3]==MODEL1) // 两段模式  
+				{  
+						 if(m_Status_Speed_Flag[MOTOR3]==STATUS_ACC)
+						 {
+									  DMA_Cmd(DMA1_Channel6, DISABLE);	//DMA
+									
+							   //   m_Dec_Curve[MOTOR3] + m_Dec_Step[MOTOR3]-m_Init_Dec_Step[MOTOR3];
+										DMA1_Channel6->CMAR=(u32)( m_Dec_Curve[MOTOR3] + m_Dec_Step[MOTOR3]-m_Init_Dec_Step[MOTOR3]);
+										DMA1_Channel6->CNDTR=m_Init_Dec_Step[MOTOR3];
+							      DMA_Cmd(DMA1_Channel6, ENABLE);
+							 	  m_Status_Speed_Flag[MOTOR3]=STATUS_DEC;
+							return;
+									
+							}
+		   if(m_Status_Speed_Flag[MOTOR3]==STATUS_DEC)
+						{
+									//	m_Status_Speed_Flag[MOTOR3]=STATUS_STOP;
+										DMA_Cmd(DMA1_Channel6, DISABLE);//释放dma 通道 
+										TIM_Cmd(TIM3,DISABLE);//  关闭时钟 
+							   	  Update_Relative_Step3();  //更新相对步数
+						 
+						}
+	    	return;
+					 
+				}		
+		if(m_Init_Model[MOTOR3]==MODEL0)
+			{
+				if ( m_Status_Speed_Flag[MOTOR3]==STATUS_ACC)
+					{
+						if(m_t[MOTOR3]>0) 
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_t[MOTOR3]--;//千单位减少
+							DMA1_Channel6->CNDTR=1000;//传输 一千个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退 函数
+							}	
+						if(m_h[MOTOR3]>0)	
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_h[MOTOR3]--;//百单位减少
+							DMA1_Channel6->CNDTR=100;//传输 一百个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退函数
+						}
+						if(m_d[MOTOR3]>0)	
+						{
+								DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_d[MOTOR3]--;//十单位减少
+							DMA1_Channel6->CNDTR=10;//传输 一百个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //直接退函数
+						}
+
+						if(m_u[MOTOR3]>0)	
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							m_u[MOTOR3]--;//个单位减少
+							DMA1_Channel6->CNDTR=1;//传输 1个 
+							DMA1_Channel6->CMAR=(u32)(m_ArrMin_Tab[MOTOR3]);
+							DMA_Cmd(DMA1_Channel6, ENABLE);
+							return ;  //退出
+						}
+						if(m_u[MOTOR3]==0)  //转换成减速
+						{
+							DMA_Cmd(DMA1_Channel6, DISABLE);
+							 m_Status_Speed_Flag[MOTOR3]=STATUS_DEC;
+											
+							 DMA1_Channel6->CMAR=(u32)m_Dec_Curve[MOTOR3];
+							 DMA1_Channel6->CNDTR=m_Dec_Step[MOTOR3];	
+									
+							 DMA_Cmd(DMA1_Channel6,ENABLE);
+							return ;
+							} 
+						}
+				if( m_Status_Speed_Flag[MOTOR3]==STATUS_DEC)		
+							{	
+								DMA_Cmd(DMA1_Channel6, DISABLE);//释放dma 通道 
+								TIM_Cmd(TIM3,DISABLE);//  关闭时钟 
+							//	TIM3->ARR=ACTIVE_TIME-2;  // 限制arr的值 输出
+									Update_Relative_Step3();	//更新相对步数 设置速度状态.
+							}
+			}
+
+}
